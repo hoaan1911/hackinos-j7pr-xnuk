@@ -1,0 +1,32 @@
+name: Build J7 Prime XNU Kernel
+on:
+  workflow_dispatch:
+
+jobs:
+  build-kernel:
+    runs-on: macos-13
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Build Dependencies
+        run: |
+          brew install cmake dtc
+
+      - name: Apply Patches and Build
+        run: |
+          # Make scripts executable
+          chmod +x common/build.sh
+          if [ -f xnu/apply.sh ]; then chmod +x xnu/apply.sh; fi
+          
+          # Run the HackiOS build script for your device
+          # (This might take a while as it downloads the XNU source)
+          ./common/build.sh j7prime
+
+      - name: Upload Kernel Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: xnu-kernel
+          path: |
+            xnu/build/*/kernel.development.*
+            common/out/*
