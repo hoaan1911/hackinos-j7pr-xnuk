@@ -516,7 +516,8 @@ dt_end(struct dt_writer *w)
 struct platform {
 	const char *name;
 	uint64_t io_base, io_size;       /* one window covering the SoC peripherals */
-	uint64_t gic_dist, gic_redist;   /* GICv3 */
+	uint64_t gic_dist, gic_redist;   /* GICv3; with gic_v2 set, gic_redist is the GICv2 CPU interface */
+	int gic_v2;                      /* the controller is a GICv2 (GIC-400) */
 	uint64_t uart;                   /* PL011, 0 if none */
 	int psci_hvc;                    /* the firmware's power interface is called with HVC, not SMC */
 	int log_other_cpu;               /* keep notes in the log partition while a kernel starts on another core */
@@ -537,6 +538,12 @@ static const struct platform platform_qemu_virt = {
 	 * is that of real hardware: an eighth of a second by a 24 MHz clock, a twentieth here.
 	 */
 	.timeout_scale = 20,
+};
+static const struct platform platform_j7prime = {
+	.name = "j7prime", .io_base = 0x10000000, .io_size = 0x05000000,
+	.gic_dist = 0x104E1000, .gic_redist = 0x104E2000, .gic_v2 = 1, .uart = 0, .log_other_cpu = 1,
+	.cores = 8, .core_shift = 8, .small_cores = 0, .psci_hvc = 0,
+	.fb_base = 0x67000000,
 };
 
 static const struct platform platform_redwood = {
@@ -560,6 +567,7 @@ static const struct platform platform_redwood = {
  */
 static const struct platform *const platforms[] = {
 	&platform_redwood,
+	&platform_j7prime,
 };
 
 /* ------------------------------------------------------------------------ */
@@ -3246,7 +3254,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 	dt_begin(&w, "gic");
 	dt_prop_str(&w, "device_type", "interrupt-controller");
 	dt_prop_str(&w, "compatible", "arm,gic-v3");
-	uint64_t gic_reg[4] = { plat->gic_dist - plat->io_base, 0x10000, plat->gic_redist - plat->io_base, 0x100000 };
+	uint64_t gic_reg[4] = { plat->gic_dist - plat->io_base, 0x10000, plat->gic_redist - plat->io_base, plat->gic_v2 ? 0x2000 : 0x100000 };
 	dt_prop(&w, "reg", gic_reg, sizeof(gic_reg));
 	dt_end(&w);
 	if (plat->uart != 0) {
@@ -3941,9 +3949,12 @@ efi_main(efi_handle image, efi_system_table *st)
 		SCREEN.width = GOP->mode->info->width;
 		SCREEN.height = GOP->mode->info->height;
 		SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
-		for (unsigned i = 0; i < sizeof(platforms) / sizeof(platforms[0]); i++)
+				for (unsigned i = 0; i < sizeof(platforms) / sizeof(platforms[0]); i++)
 			if (platforms[i]->fb_base == SCREEN.base)
 				PLAT = platforms[i];
+		/* the J7 Prime's firmware may report another framebuffer address: Cortex-A53 (MIDR part 0xd03) is enough */
+		if (PLAT == &platform_qemu_virt && ((READ_SYSREG(MIDR_EL1) >> 4) & 0xfff) == 0xd03 && SCREEN.width == 1080)
+			PLAT = &platform_j7prime;
 		if (PLAT == &platform_qemu_virt)
 			ramfb_phone_screen();
 		print("display %d x %d at %x\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
